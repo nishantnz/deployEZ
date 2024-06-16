@@ -1,9 +1,8 @@
 const express = require("express");
-const { generateSlug } = require("random-word-slugs");
 const { ECSClient, RunTaskCommand } = require("@aws-sdk/client-ecs");
 const app = express();
 const PORT = 9000;
-
+const { clusterInfo } = require("./constants.js");
 app.use(express.json());
 
 const ecsClient = new ECSClient({
@@ -15,14 +14,31 @@ const ecsClient = new ECSClient({
 });
 
 const config = {
-  CLUSTER:
-    "arn:aws:ecs:ap-south-1:891377186100:cluster/deployez-builder-cluster",
-  TASK: "arn:aws:ecs:ap-south-1:891377186100:task-definition/deployez-builder-task",
+  CLUSTER: clusterInfo.clusterName,
+  TASK: clusterInfo.taskDefination,
 };
 
 app.post("/api/v1/project", async (req, res) => {
-  const projectSlug = generateSlug();
-  const { gitURL } = req.body;
+  const { gitURL, customDomainName } = req.body;
+  if (!gitURL && !customDomainName) {
+    return res
+      .status(400)
+      .json({ error: "Either Git URL or custom Domain Name must be provided" });
+  }
+  let repoName;
+  if (gitURL) {
+    const parts = gitURL.split("/");
+    const repoNameWithGit = parts[parts.length - 1];
+    repoName = repoNameWithGit.replace(".git", "");
+  }
+
+  const project_name = customDomainName || repoName;
+
+  if (!project_name) {
+    return res
+      .status(400)
+      .json({ error: "Invalid input: Unable to determine project name" });
+  }
   const command = new RunTaskCommand({
     cluster: config.CLUSTER,
     taskDefinition: config.TASK,
@@ -31,11 +47,11 @@ app.post("/api/v1/project", async (req, res) => {
     networkConfiguration: {
       awsvpcConfiguration: {
         subnets: [
-          "subnet-0796e4616be7b956a",
-          "subnet-0d0af259d4df3378e",
-          "subnet-041572c5971a690c6",
+          clusterInfo.subnet1,
+          clusterInfo.subnet2,
+          clusterInfo.subnet3,
         ],
-        securityGroups: ["sg-029624e427f0509f1"],
+        securityGroups: [clusterInfo.securityGroup1],
         assignPublicIp: "ENABLED",
       },
     },
@@ -50,17 +66,18 @@ app.post("/api/v1/project", async (req, res) => {
             },
             {
               name: "PROJECT_ID",
-              value: projectSlug,
+              value: project_name,
             },
           ],
         },
       ],
     },
   });
+
   await ecsClient.send(command);
   return res.json({
     status: "queued",
-    data: { projectSlug, url: `http://${projectSlug}.localhost:8000` },
+    data: { project_name, url: `http://${project_name}.localhost:8000` },
   });
 });
 
