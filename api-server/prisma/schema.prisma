@@ -22,11 +22,12 @@ enum DeploymentStatus {
 }
 
 model User {
-  id       String    @id @default(uuid())
-  username String    @unique
-  email    String    @unique
-  password String
-  projects Project[]
+  id           String    @id @default(uuid())
+  username     String    @unique
+  email        String    @unique
+  password     String
+  refreshToken String?
+  projects     Project[]
 }
 
 model Project {

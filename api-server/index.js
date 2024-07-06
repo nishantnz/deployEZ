@@ -1,24 +1,17 @@
 const express = require("express");
-const { ECSClient, RunTaskCommand } = require("@aws-sdk/client-ecs");
+const { RunTaskCommand } = require("@aws-sdk/client-ecs");
+const { clusterInfo } = require("./utils/constants.js");
+const jwt = require("jsonwebtoken");
+const { ecsClient, config } = require("./utils/ecsclient.js");
+const userRoutes = require("./routes/userRoutes.js");
+
 const app = express();
 const PORT = 9000;
-const { clusterInfo } = require("./constants.js");
+
 app.use(express.json());
-
-const ecsClient = new ECSClient({
-  credentials: {
-    accessKeyId: "AKIA47CRYOU2JW7QEJPV",
-    secretAccessKey: "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",
-  },
-  region: "ap-south-1",
-});
-
-const config = {
-  CLUSTER: clusterInfo.clusterName,
-  TASK: clusterInfo.taskDefination,
-};
-
-app.post("/api/v1/project", async (req, res) => {
+app.use("/api/v1", userRoutes);
+app.post("api/v1/project", async (req, res) => {});
+app.post("/api/v1/deploy", async (req, res) => {
   const { gitURL, customDomainName } = req.body;
   if (!gitURL && !customDomainName) {
     return res
@@ -58,7 +51,7 @@ app.post("/api/v1/project", async (req, res) => {
     overrides: {
       containerOverrides: [
         {
-          name: "builder-image",
+          name: clusterInfo.containerOverridesName,
           environment: [
             {
               name: "GIT_REPOSITORY_URL",

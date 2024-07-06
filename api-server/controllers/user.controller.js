@@ -4,6 +4,29 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const bcrypt = require("bcrypt");
 
+const generateAccessToken = (user) => {
+  return jwt.sign(
+    {
+      id: user.id,
+    },
+    process.env.ACCESS_TOKEN_SECRET,
+    {
+      expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
+    }
+  );
+};
+const generateRefreshToken = (user) => {
+  return jwt.sign(
+    {
+      id: user.id,
+    },
+    process.env.REFRESH_TOKEN_SECRET,
+    {
+      expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
+    }
+  );
+};
+
 const registerUser = async (req, res) => {
   const { username, email, password } = req.body;
   if (!username || !email || !password) {
@@ -72,11 +95,20 @@ const registerUser = async (req, res) => {
         password: hashedPassword,
       },
     });
-
+    const accessToken = generateAccessToken(newUser);
+    const refreshToken = generateRefreshToken(newUser);
+    await prisma.user.update({
+      where: {
+        id: newUser.id,
+      },
+      data: { refreshToken: refreshToken },
+    });
     res.status(200).json({
       status: "Account Succesfully Created",
       status_code: 200,
       user_id: newUser.id,
+      accessToken,
+      refreshToken,
     });
   } catch (error) {
     console.error("Error creating user: ", error);
@@ -118,10 +150,21 @@ const loginUser = async (req, res) => {
       message: "Password Incorrect",
     });
   }
+
+  const accessToken = generateAccessToken(existingUser);
+  const refreshToken = generateRefreshToken(existingUser);
+  await prisma.user.update({
+    where: {
+      id: existingUser.id,
+    },
+    data: { refreshToken: refreshToken },
+  });
   res.status(200).json({
     status: "Succesfully Logged In",
     status_code: 200,
     user_id: existingUser.id,
+    accessToken,
+    refreshToken,
   });
 };
 
