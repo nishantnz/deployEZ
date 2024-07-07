@@ -4,11 +4,8 @@ const {
   loginUser,
   registerUser,
 } = require("../controllers/user.controller.js");
-const authenticateToken = require("../middlewares/verifyToken.js");
 
-const createProject = require("../controllers/createProject.controller.js");
+const register = router.post("/register", registerUser);
+const login = router.post("/login", loginUser);
 
-router.post("/register", registerUser);
-router.post("/login", loginUser);
-router.post("/createProject", authenticateToken, createProject);
-module.exports = { router };
+module.exports = { register, login };
