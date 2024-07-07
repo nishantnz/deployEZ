@@ -6,14 +6,13 @@ const prisma = new PrismaClient();
 
 const deployProject = async (req, res) => {
   const { projectID } = req.body;
-
+  const userid = req.user.id;
   const project = await prisma.project.findUnique({
     where: {
       id: projectID,
     },
   });
-
-  if (!project) {
+  if (!project || project.createdById !== userid) {
     return res.status(404).json({
       error: "Project Not Found",
     });
