@@ -70,12 +70,6 @@ const deployProject = async (req, res) => {
     },
   });
 
-  res.status(201).json({
-    status: "Deployment Queued Successfully",
-    status_code: 201,
-    deployment_id: deployment.id,
-  });
-
   const command = new RunTaskCommand({
     cluster: config.CLUSTER,
     taskDefinition: config.TASK,
