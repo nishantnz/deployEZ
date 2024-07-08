@@ -106,11 +106,11 @@ const deployProject = async (req, res) => {
               value: projectID,
             },
             {
-              name: "Deployment_ID",
+              name: "DEPLOYMENT_ID",
               value: deployment.id,
             },
             {
-              name: "Project_Name",
+              name: "PROJECT_NAME",
               value: project_name,
             },
           ],
