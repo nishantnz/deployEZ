@@ -1,24 +1,33 @@
 FROM ubuntu:focal
 
-RUN apt-get update 
-RUN apt-get install -y curl
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y curl git && \
+    curl -sL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get upgrade -y && \
+    apt-get install -y nodejs
 
-RUN curl -sL https://deb.nodesource.com/setup_20.x | bash -
-
-RUN apt-get upgrade -y
-RUN apt-get install -y nodejs
-
-RUN apt-get install git -y
-
+# Set working directory
 WORKDIR /home/app
-COPY main.sh main.sh
-COPY script.js script.js
-COPY package*.json .
 
+# Copy application dependency manifests
+COPY package*.json ./
+
+# Install node dependencies
 RUN npm install
 
-RUN chmod +x main.sh
-RUN chmod +x script.js
+# Copy Prisma schema file from API server folder
+COPY .env ./
+COPY prisma ./prisma
 
+# Generate Prisma client
+RUN npx prisma generate
+
+# Copy remaining application files
+COPY main.sh script.js ./
+
+# Ensure scripts have execution permissions
+RUN chmod +x main.sh script.js
+
+# Set entrypoint
 ENTRYPOINT [ "/home/app/main.sh" ]
-
