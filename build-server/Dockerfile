@@ -12,7 +12,8 @@ WORKDIR /home/app
 
 # Copy application dependency manifests
 COPY package*.json ./
-
+COPY kafka.pem kafka.pem
+COPY kafkaCLient.js kafkaCLient.js
 # Install node dependencies
 RUN npm install
 

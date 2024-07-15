@@ -5,6 +5,9 @@ const mime = require("mime-types");
 const { PutObjectCommand, S3Client } = require("@aws-sdk/client-s3");
 const { log, error } = require("console");
 const { PrismaClient } = require("@prisma/client");
+
+const kafka = require("./kafkaCLient.js");
+
 const s3Client = new S3Client({
   credentials: {
     accessKeyId: "AKIA47CRYOU2JW7QEJPV",
@@ -17,7 +20,27 @@ const prisma = new PrismaClient();
 const PROJECT_ID = process.env.PROJECT_ID;
 const DEPLOYMENT_ID = process.env.DEPLOYMENT_ID;
 const PROJECT_NAME = process.env.PROJECT_NAME;
-// function publishLog(userlog) {}
+
+const producer = kafka.producer();
+
+async function publishLog(userlog) {
+  log("Pusblishing logs on KAFKA....");
+  await producer.send({
+    topic: "build-server-logs",
+    messages: [
+      {
+        partition: 0,
+        key: "userlog",
+        value: JSON.stringify({
+          PROJECT_ID,
+          DEPLOYMENT_ID,
+          userlog,
+        }),
+      },
+    ],
+  });
+  // await producer.disconnect();
+}
 
 async function updateDeploymentStatus(status) {
   await prisma.deployment.update({
@@ -38,7 +61,7 @@ async function uploadFilesToS3(directory) {
     //if any directory exists, it ignores it
     if (lstatSync(fullPath).isDirectory()) continue;
     console.log("Uploading file", file);
-    //publishLog(`Uploading File: ${file}`);
+    await publishLog(`Uploading File: ${file}`);
     const command = new PutObjectCommand({
       Bucket: "deploy-ez",
       Key: `__outputs/${PROJECT_ID}/${PROJECT_NAME}/${file}`,
@@ -49,42 +72,44 @@ async function uploadFilesToS3(directory) {
     try {
       await s3Client.send(command);
       console.log("Uploaded file", file);
-      //publishLog(`Uploaded File: ${file}`);
+      await publishLog(`Uploaded File: ${file}`);
     } catch (err) {
       console.error("Error uploading file:", err);
-      //publishLog(`Error uploading file: ${err}`);
+      await publishLog(`Error uploading file: ${err}`);
       await updateDeploymentStatus("FAILURE");
       throw err;
     }
   }
   console.log("Uploaded all files to S3");
-  //  publishLog("FILES UPLOADED.");
+  await publishLog("FILES UPLOADED.");
 }
 
 async function init() {
   try {
+    //connecting kafka producer
+    await producer.connect();
     console.log("Executing Script.js....");
     await updateDeploymentStatus("IN_PROG");
-    //publishLog("Build Started...");
+    await publishLog("Build Started...");
     const outputDir = path.join(__dirname, "output");
     //to check initially whether the project is static or not
     const staticProject = existsSync(path.join(outputDir, "index.html"));
     if (!staticProject) {
       const p = exec(`cd ${outputDir} && npm install && npm run build`);
 
-      p.stdout.on(`data`, function (data) {
+      p.stdout.on(`data`, async function (data) {
         console.log(data.toString());
-        //  publishLog(data.toString());
+        await publishLog(data.toString());
       });
 
-      p.stderr.on(`data`, function (data) {
+      p.stderr.on(`data`, async function (data) {
         console.log("ERROR: ", data.toString());
-        //  publishLog(`ERROR: ${data.toString()}`);
+        await publishLog(`ERROR: ${data.toString()}`);
       });
 
       p.on("close", async function () {
         console.log("Build complete,Uploading Files To S3.......");
-        //publishLog("Build complete,\nUploading Files.......");
+        await publishLog("Build complete,\nUploading Files.......");
         const possibleFolders = ["dist", "build"];
         let distFolderPath = null;
         for (const folder of possibleFolders) {
@@ -96,9 +121,9 @@ async function init() {
         }
         if (!distFolderPath) {
           console.error("Neither 'dist' nor 'build' folder found!");
-          // publishLog(
-          //   "ERROR: Neither 'dist' nor 'build' folder found while building your project!"
-          // );
+          await publishLog(
+            "ERROR: Neither 'dist' nor 'build' folder found while building your project!"
+          );
           await updateDeploymentStatus("FAILURE");
           return;
         }
@@ -106,20 +131,20 @@ async function init() {
         await uploadFilesToS3(distFolderPath);
         log("Uploaded Files to S3 bucket");
         await updateDeploymentStatus("READY");
-        //  publishLog("DONE.");
+        await publishLog("DONE.");
       });
     } else {
       console.log("Static project detected. Uploading files to S3.......");
-      //  publishLog("UPLOADING YOUR FILES...");
+      await publishLog("UPLOADING YOUR FILES...");
       await uploadFilesToS3(outputDir);
       console.log("Uploaded all files to S3");
       await updateDeploymentStatus("READY");
-      //  publishLog("DONE.");
+      await publishLog("DONE.");
     }
     process.exit(0);
   } catch (err) {
     console.error(err);
-    //publishLog(`ERROR: ${err}`);
+    await publishLog(`ERROR: ${err}`);
     await updateDeploymentStatus("FAILURE");
     process.exit(0);
   }
@@ -128,4 +153,5 @@ async function init() {
 init().catch(async (err) => {
   error(err);
   await updateDeploymentStatus("FAILURE");
+  await publishLog("FAILURE");
 });
