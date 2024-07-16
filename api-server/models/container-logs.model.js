@@ -12,8 +12,6 @@ const logEventsSchema = new Schema(
     projectID: {
       type: String,
       require: true,
-      unique: true,
-      index: true,
     },
     logs: {
       type: [String],

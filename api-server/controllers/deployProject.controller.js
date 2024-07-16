@@ -3,6 +3,7 @@ const { RunTaskCommand } = require("@aws-sdk/client-ecs");
 const { clusterInfo } = require("../utils/constants.js");
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
+const LogEvents = require("../models/container-logs.model.js");
 
 const deployProject = async (req, res) => {
   const { projectID } = req.body;
@@ -68,6 +69,13 @@ const deployProject = async (req, res) => {
       status: "QUEUED",
       projectID: projectID,
     },
+  });
+
+  const deploymentId = deployment.id;
+  await LogEvents.create({
+    projectID,
+    deploymentID: deploymentId,
+    logs: [],
   });
 
   const command = new RunTaskCommand({
