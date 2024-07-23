@@ -1,17 +1,22 @@
 const { exec } = require("child_process");
 const path = require("path");
-const { readdirSync, createReadStream, lstatSync, existsSync } = require("fs");
+const {
+  readdirSync,
+  createReadStream,
+  lstatSync,
+  existsSync,
+  readFileSync,
+} = require("fs");
 const mime = require("mime-types");
 const { PutObjectCommand, S3Client } = require("@aws-sdk/client-s3");
 const { log, error } = require("console");
 const { PrismaClient } = require("@prisma/client");
-
 const kafka = require("./kafkaCLient.js");
 
 const s3Client = new S3Client({
   credentials: {
-    accessKeyId: "AKIA47CRYOU2JW7QEJPV",
-    secretAccessKey: "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",
+    accessKeyId: "",
+    secretAccessKey: "",
   },
   region: "ap-south-1",
 });
@@ -24,7 +29,7 @@ const PROJECT_NAME = process.env.PROJECT_NAME;
 const producer = kafka.producer();
 
 async function publishLog(userlog) {
-  log("Pusblishing logs on KAFKA....");
+  log("Publishing logs on KAFKA....");
   await producer.send({
     topic: "build-server-logs",
     messages: [
@@ -39,26 +44,19 @@ async function publishLog(userlog) {
       },
     ],
   });
-  // await producer.disconnect();
 }
 
 async function updateDeploymentStatus(status) {
   await prisma.deployment.update({
-    where: {
-      id: DEPLOYMENT_ID,
-    },
-    data: {
-      status: status,
-    },
+    where: { id: DEPLOYMENT_ID },
+    data: { status: status },
   });
 }
+
 async function uploadFilesToS3(directory) {
-  const files = readdirSync(directory, {
-    recursive: true,
-  });
+  const files = readdirSync(directory, { recursive: true });
   for (const file of files) {
     const fullPath = path.join(directory, file);
-    //if any directory exists, it ignores it
     if (lstatSync(fullPath).isDirectory()) continue;
     console.log("Uploading file", file);
     await publishLog(`Uploading File: ${file}`);
@@ -84,69 +82,105 @@ async function uploadFilesToS3(directory) {
   await publishLog("FILES UPLOADED.");
 }
 
+async function buildProject(outputDir) {
+  return new Promise((resolve, reject) => {
+    const buildCommand = `cd ${outputDir} && npm install && npm run build`;
+    const process = exec(buildCommand);
+
+    process.stdout.on("data", async (data) => {
+      console.log(data.toString());
+      await publishLog(data.toString());
+    });
+
+    process.stderr.on("data", async (data) => {
+      console.log("ERROR:", data.toString());
+      await publishLog(`ERROR: ${data.toString()}`);
+    });
+
+    process.on("close", async (code) => {
+      if (code === 0) {
+        console.log("Build complete");
+        await publishLog("Build complete");
+        resolve();
+      } else {
+        const errorMsg = `Build process exited with code ${code}`;
+        console.error(errorMsg);
+        await publishLog(`ERROR: ${errorMsg}`);
+        reject(new Error(errorMsg));
+      }
+    });
+  });
+}
+
+async function determineProjectType(outputDir) {
+  const packageJsonPath = path.join(outputDir, "package.json");
+
+  if (existsSync(packageJsonPath)) {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+
+    if (packageJson.dependencies && packageJson.dependencies.react) {
+      return "react";
+    } else if (
+      packageJson.devDependencies &&
+      packageJson.devDependencies.vite
+    ) {
+      return "vite";
+    } else if (packageJson.scripts && packageJson.scripts.build) {
+      return "node";
+    } else {
+      return "static";
+    }
+  } else {
+    const indexHtmlPath = path.join(outputDir, "index.html");
+    if (existsSync(indexHtmlPath)) {
+      return "static";
+    } else {
+      throw new Error("Unknown project type");
+    }
+  }
+}
+
 async function init() {
   try {
-    //connecting kafka producer
     await producer.connect();
     console.log("Executing Script.js....");
     await updateDeploymentStatus("IN_PROG");
     await publishLog("Build Started...");
     const outputDir = path.join(__dirname, "output");
-    //to check initially whether the project is static or not
-    const staticProject = existsSync(path.join(outputDir, "index.html"));
-    if (!staticProject) {
-      const p = exec(`cd ${outputDir} && npm install && npm run build`);
 
-      p.stdout.on(`data`, async function (data) {
-        console.log(data.toString());
-        await publishLog(data.toString());
-      });
+    const projectType = await determineProjectType(outputDir);
+    console.log(`Detected project type: ${projectType}`);
+    await publishLog(`Detected project type: ${projectType}`);
 
-      p.stderr.on(`data`, async function (data) {
-        console.log("ERROR: ", data.toString());
-        await publishLog(`ERROR: ${data.toString()}`);
-      });
-
-      p.on("close", async function () {
-        console.log("Build complete,Uploading Files To S3.......");
-        await publishLog("Build complete,\nUploading Files.......");
-        const possibleFolders = ["dist", "build"];
-        let distFolderPath = null;
-        for (const folder of possibleFolders) {
-          const possibleFolderPath = path.join(__dirname, "output", folder);
-          if (existsSync(possibleFolderPath)) {
-            distFolderPath = possibleFolderPath;
-            break;
-          }
-        }
-        if (!distFolderPath) {
-          console.error("Neither 'dist' nor 'build' folder found!");
-          await publishLog(
-            "ERROR: Neither 'dist' nor 'build' folder found while building your project!"
-          );
-          await updateDeploymentStatus("FAILURE");
-          return;
-        }
-        // const distFolderPath = path.join(__dirname, "output", "dist" || "build");
-        await uploadFilesToS3(distFolderPath);
-        log("Uploaded Files to S3 bucket");
-        await updateDeploymentStatus("READY");
-        await publishLog("DONE.");
-      });
-    } else {
+    if (projectType === "static") {
       console.log("Static project detected. Uploading files to S3.......");
       await publishLog("UPLOADING YOUR FILES...");
       await uploadFilesToS3(outputDir);
-      console.log("Uploaded all files to S3");
-      await updateDeploymentStatus("READY");
-      await publishLog("DONE.");
+    } else {
+      await buildProject(outputDir);
+      const possibleFolders = ["dist", "build"];
+      let distFolderPath = null;
+      for (const folder of possibleFolders) {
+        const possibleFolderPath = path.join(outputDir, folder);
+        if (existsSync(possibleFolderPath)) {
+          distFolderPath = possibleFolderPath;
+          break;
+        }
+      }
+      if (!distFolderPath) {
+        throw new Error("Neither 'dist' nor 'build' folder found!");
+      }
+      await uploadFilesToS3(distFolderPath);
     }
+
+    await updateDeploymentStatus("READY");
+    await publishLog("DONE.");
     process.exit(0);
   } catch (err) {
     console.error(err);
     await publishLog(`ERROR: ${err}`);
     await updateDeploymentStatus("FAILURE");
-    process.exit(0);
+    process.exit(1);
   }
 }
 
